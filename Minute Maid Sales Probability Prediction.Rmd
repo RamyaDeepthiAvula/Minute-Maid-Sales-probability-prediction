@@ -1,0 +1,437 @@
+---
+title: "Classification using Logistic Regression and Support Vector Machines"
+author: "Ramya Deepthi Avula"
+output: html_document
+---
+
+# Business Problem
+A grocery store chain sells two brands of orange juice- Minute Maid and Citrus Hill. Of these two, margins are more for Minute Maid and probably so, the brand manager and sales manager of the grocery store chain are interested in the performance of the brand, Minute Maid. Both of them want to improve the sales performance of this brand and since their job responsibilites are different, they need different types of information for it.
+
+The brand manager wants to know the factors that increase the probability of the sales of Minute Maid. He wants to know what he should work upon to increase this probability. The sales manager is interested in just predicting the probability of a customer purchasing Minute Maid.
+
+Also, both of them want to know how confident we are about the recommendations.
+
+# Methods to be used
+Since the brand manager wants to know the factors effecting the probability of sales of Minute Maid, we need to do descriptive analysis and find out the variables that effect the probability of sales of MM the most. I built a logistic regression and tested its in-sample and out-sample accuracy to see how good the predictors are in estimating the probability of buying MM. The coefficients estimates in the regression output are used to judge the effect of the predictors on the probability of sales.
+
+The sales manager needs only a model that predicts the probability of buying MM as accurate as possible. Since he doesn't need information about the predictors, a blackbox model that gives high accuracy can be used. I built a Support Vector Classification model for it and calculated in-sample and out-sample accuracy to determine how good the model is in the predictions.
+
+While the logistics model alone will suffice to meet the requirements of both the sales manager and the brand manager, using support vector classification will give a higher accuracy with proper paramaeter tuning. So, if the details of predictors are not required, as in the case of sales manager's requirements, using SVC is recommended.
+
+## Scaling/Standardization:
+
+I standardized the numeric predictors so as to compare between the effect of them on the target variable in the logistic regression. Without standardization, the predictors could be on different scales and comparing them is incorrect. Also, SVC works on the principle to maximize the distance between separating planes. If data is unstandardized, the predictors of large values will dominate others which affects the distance calculation.
+
+In logistic regression, standardization is done while building the model using train() function of caret package. This ensures standardization of train and test datasets separately. 
+In Support Vector Classification, to avoid data snooping, standardization is done on train and test data separately after the split.
+
+## Reduce Overfitting:
+
+In logistic regression, I will use 10 fold cross validation repeated 50 times.
+This is essentially splitting data into train and test in 90:10 ratio 50 times randomly. So train data will be different each of the 50 times and this ensures use of maximum data to train. Each time, the model is built on train and tested on the unused 10% test data set. The final accuracy in the output of the model is the average which is a good representation of the model performance on new data.
+
+In case of SVC, first the data is split into 90:10 ratio. I want to train using more data to reduce overfitting. Again, using caret package, the model is built on train data alone and 10 fold cross validation is repeated for 10 times. Since there are other parameter combinations for which the model has to iterate, the repetition for cross validation is limited to 10 times to reduce the model running time.
+
+# Data
+
+The initial dataset loaded has 18 variables including the target variable "Purchase" which is a factor variable with levels "CH" and "MM". CH stands for Citrus Hill and MM stands for Minute Maid. Of the 17 predictors, there are 5 factors and 12 numeric variables. However, the factor variables are in numeric format. These are changed to factors. The data also had many duplicate variables which are removed. This is explained in detail, later in this report. Some of the variables are very highly correlated. Correlation>0.75 is removed.
+
+The following variables are used in building the logistic model.
+
+Week of purchase- I have used this as a numeric predictor, this variable represents trend in the output if any.
+
+StoreID- There are 5 stores with IDs 1,2,3,4,7. This is a factor variable.
+
+Price CH and Price MM are numeric predictors that give the prices charged for CH and MM respectively.
+
+Special CH and Special MM are factors with levels 0 and 1 where 0 implies no special promo applied on that transaction and 1 implies some special promo like loyalty points applied on the transaction.
+
+LoyalCH captures the probability of buying CH over MM
+
+SalePriceCH- Sale price of CH
+
+PctDiscMM and PctDiscCH capture the percentage discount on MM and CH.
+
+## Redundancy in data
+
+The rest of the predictors are not used because they are either duplicates or highly correlated with one of the above predictors used. The duplicated predictors like "STORE" will have NAs in the model ouput, if used. If we use all predictors, multicollinearity among them will inflate the coefficients in the output. Also, using all the predictors will result in a overfitted model and while this might increase the in sample accuracy, out sample accuracy decreases which means the model predicitons on new data will be bad.
+
+The same predictors used in logistic regression are used in support vector classification as well. One hot encoding of factor variables is done in addition.
+
+All the analysis done is explained along with the code and output in this report.In case of support vector classification, the model is tried for a wide range of parameters and the best ones are shown in the report. Let's look at the analysis now.
+
+## Packages Used
+dplyr, caret, dataPreparation, psych, mlbench, e1071, ROCR, kernlab
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE) #setup
+```
+
+```{r, include=FALSE}
+library(dplyr)
+library(caret)
+library(dataPreparation)
+library(psych)
+library(mlbench)
+library(e1071)
+library(ROCR)
+library(kernlab)
+
+```
+
+# Data Preprocessing
+
+Let's load the data and look at the structure and statistics of data.
+```{r}
+data<-read.csv(url("http://data.mishra.us/files/OJ.csv"))
+str(data)
+summary(data)
+```
+We will make the below changes to data.
+
+1.Subtract 226 from WeekofPurchase to bring down the week scale to 1-52 just for ease of understanding.Also, I'll consider week a numeric variable to capture trend if any, so starting from 1 makes more sense for interpretation of model results.
+
+2. StoreID, Store7, SpecialCH, SpecialMM, STORE are factor variables.Except Store7, rest of them are in numeric format. These should be converted to factors.
+
+```{r}
+data$WeekofPurchase <- data$WeekofPurchase-226
+summary(data$WeekofPurchase)
+```
+
+```{r}
+factors<- c("StoreID","SpecialCH", "SpecialMM","STORE")
+data[,factors] <-lapply(data[,factors], factor)
+
+summary(data)
+```
+
+## Removing redundancy in dataset
+
+On glimpse, StoreID, Store7 and STORE seem to capture the same information. There might be other duplicates. It's good to confirm it statistically before we remove any of these.
+
+```{r}
+whichAreConstant(data)
+whichAreInDouble(data)
+whichAreBijection(data)
+whichAreIncluded(data)
+```
+As expected, STORE is a bijection which means it's exactly the same as StoreID. The variable "STORE" should be removed.Also Store7,DiscCH and DiscMM will be removed as they are included in other variables.
+```{r}
+data <- subset(data, select=-c(STORE,DiscCH,DiscMM,Store7))
+```
+
+Also, PriceDiff and ListPriceDiff seem to be derived from the SalePrice and Price variables. Let's check this.
+
+```{r}
+cor(data$SalePriceMM-data$SalePriceCH,data$PriceDiff)
+cor(data$PriceMM-data$PriceCH,data$ListPriceDiff)
+```
+This confirms that PriceDiff can be derived from SalePriceMM & SalePriceCH,
+ListPriceDiff can be derived from PriceMM & PriceCH. So PriceDiff and ListPriceDiff can be removed.
+
+```{r}
+data<- subset(data,select=-c(PriceDiff,ListPriceDiff))
+```
+
+There are no other seemingly incorrect values in individual variables, so no further data cleaning is required at this stage.
+
+
+Both the brand manager and sales manager are interested in just the brand "MM". So let's recode the target variable to Yes/No for ease of interpretation. Now, Purchase implies purchase of MM
+ 
+```{r}
+data$Purchase <- as.character(data$Purchase)
+data$Purchase <- ifelse(data$Purchase=="MM","Yes","No")
+data$Purchase <- as.factor(data$Purchase)
+```
+
+## MultiCollinearity
+
+Let's finally check for multicollinearity. Let's choosing an arbitrary correlation value beyond which one of the correlated variables should be deleted. 
+
+```{r}
+predictors <- data[,c(2:12)]
+
+predictors_numeric <- select_if(predictors,is.numeric)
+predictors_numeric%>% 
+  cor() %>% 
+  findCorrelation(cutoff = .75, names = T)
+```
+SalePriceMM is highly correlated(cor>0.75) with some other predictors in our dataset and removing this variable will ensure correlation<0.75 between any 2 predictors remaining.
+
+```{r}
+predictors <- subset(predictors, select= -SalePriceMM)
+```
+
+Now let's combine the predictors with the target variable.
+
+```{r}
+df <-predictors
+df$Purchase<- data$Purchase
+```
+
+
+There are still 2 things that we are to do before building the models- standardization and one hot encoding. The requirements of these are different for logistic and SVC models which is explained below. So, we will do them separately for the 2 models.
+
+Logistic Regression: To compare between predictor coefficients in logistic regression, we need to standardize the predictors but we don't necessarily need to do one hot encoding.
+
+SVC: To build a SVC model, we need only numeric predictors, so we need to do one hot encoding.So, it requires both standardization and one hot encoding. We don't want to standardize the one hot encoded factor variables.So, we will do standardization first followed by one hot encoding.
+
+# Logistic Regression
+
+Usin caret's train() function to build the glm model, standardization can be taken care of within the function and also k-fold cross validation can be done.
+
+```{r}
+split=0.9
+set.seed(123)
+train_index <- sample(1:nrow(df), split * nrow(df))
+test_index <- setdiff(1:nrow(df), train_index)
+train_Data <- df[train_index]
+X_test_unscaled <- df[test_index, -11]
+y_test <- df[test_index, 11]
+
+set.seed(123) 
+train.control <- trainControl(method = "repeatedcv", number = 10, repeats = 50)
+# Train the model
+model_glm <- train(Purchase ~., data = train_Data, method = "glm",
+               trControl = train.control, preProcess=c("center","scale"))
+# Summarize the results
+print(model_glm)
+summary(model_glm)
+
+(predict(model_glm)==train_Data$Purchase) %>% 
+  mean ##In-sample accuracy: 0.8349
+```
+
+Now let's predict using this model on test data
+```{r}
+glmPred <- predict(model_glm, newdata = X_test_unscaled,
+probability = TRUE)
+confusionMatrix(data = glmPred, as.factor(y_test$Purchase))
+```
+
+## Model interpretation and performance:
+
+The model's in-sample(0.8349) and out-sample(0.8598) accuracies are very close, so there's no overfitting, so it's a good model. So, if we use this model to predict purchase of MM or CH, we will be correct roughly 85% of the time.
+
+Since the predictors are standardized while building the model, the model coefficients are comparable.There are 4 significant coefficients. StoreID7, PriceMM, LoyalCH, PctDiscMM.
+
+LoyalCH: Comparing the magnitude of these 4 coefficients, LoyalCH has the highest effect on the probability of customers choosing MM. For every standard deviation increase in the probability of a customer being loyal to the brand Citrus Hill (CH), the log odds of the customer buying MM decreases by a factor of 1.90058, keeping all other predictors constant.
+
+The descending order of the remaining 3 significant predictors based on their
+effect on target variable is:
+
+PctDiscMM
+PriceMM
+StoreID7
+
+The interpretation is as below.
+
+For 1 standard deviation increase in percentage discount on MM, the log odds of purchasing MM increases by a factor of 0.48106 when all other predictors are constant.
+
+For 1 standard deviation increase in the price of MM, the log odds of purchasing MM decreases by a factor of 0.42511, keeping other predictors constant.
+
+Compared to store 1, the log odds of purchasing MM in store 7 is less by a factor of 0.30291, keeping the rest of predictors constant.
+
+Confidence Level: PriceMM, LoyalCH, PctDiscMM are significant at a level of p<0.001. This means we are 99.9% confident about the effect of these predictors. There is only 0.1% chance that the coefficients of these predictors are zero in the population, which implies 0.1% chance that these predictors don't have effect on the probability of purchase of MM. Regarding StoreID7 we are 95% confident since it's significant at a level of p<0.05. There is 5% chance that the log odds of purchasing MM in Store 7 is not different from Store 1.
+
+## Recommendation to Brand Manager
+
+1. Since LoyalCH is the significant predictor with highest effect, loyalty plays a huge role in purchase of a brand. The brand manager should focus on improving brand loyalty to Minute Maid. He could talk to loyal customers of both MM and CH and understand what keeps them loyal to their brands. Based on customer feedback, he could improve the desired features in MM. Promotion of Minute Maid and a good customer service will help increase brand loyalty.
+
+2. Discounts have a positive effect on purchase of MM. While it cuts into margins from the brand, an optimum amount of discount so as to not cut too much into margins and yet increase the sales of MM reasonably should be determined. Other kind of indirect discounts like bundling MM with other products and offering discount on the whole bundle can be tried. This improves sales of MM and some other products in the grocery store.
+
+3. Price is a major factor in sales of any product. It appears to have significant effect on MM as well.The negative coefficient of PriceMM implies there are some price sensitive customers. If it's not economical to reduce price of Minute Maid, these price sensitive customers could be identified and special discount coupons can be emailed to them for purchasing MM.
+
+4. The brand manager needs to look into the differences between Store 7 and the rest of the stores since Store7 has a negative coefficient which is significant. There might be many reasons for this. The placement of MM in the store might not be as good as Citrus Hill, there might be store level promotions for Citrus Hill, or Store 7 might be located in a low income, price sensitive area. The brand manager should maintain a customer feedback system for MM and CH here for a while and analyse the causes.
+
+
+# Support Vector Classification
+
+Let's first split data into "train" and "test". Here 90% of data randomly selected will be used for training and remaining 10% will be used to test the model performance.
+```{r}
+split=0.9
+set.seed(123)
+train_index <- sample(1:nrow(df), split * nrow(df))
+test_index <- setdiff(1:nrow(df), train_index)
+```
+
+Now let's separate predictors and target variable in both train and test data.
+```{r}
+X_train_unscaled <- df[train_index, -11]
+y_train <- df[train_index, 11]
+X_test_unscaled <- df[test_index, -11]
+y_test <- df[test_index, 11]
+```
+
+## Standardization
+
+Now the numeric predictors are standardized in both train and test separately.
+```{r}
+scales <- build_scales(dataSet = X_train_unscaled,
+cols = "auto", verbose = FALSE)
+X_train <- fastScale(dataSet = X_train_unscaled,
+scales = scales, verbose = FALSE)
+X_test <- fastScale(dataSet = X_test_unscaled,
+scales = scales, verbose = FALSE)
+```
+
+## One hot encoding
+Support vector classification can handle only numerical predictors. So, the factor variables in the predictors are encoded accordingly.
+```{r}
+encoding <- build_encoding(dataSet = X_train,
+cols = "auto", verbose = FALSE)
+X_train <- one_hot_encoder(dataSet = X_train,
+encoding = encoding, drop = TRUE, verbose = FALSE)
+X_test <- one_hot_encoder(dataSet = X_test, encoding = encoding,drop = TRUE, verbose = FALSE)
+
+summary(X_train)
+
+```
+
+One hot encoding has created dummys of factor variables, but for k levels in a factor, only k-1 dummies are needed. The remaining dummies are redundant. The same can be checked through looking for the variables which are included in other variables.
+```{r}
+whichAreIncluded(X_train)
+whichAreIncluded(X_test)
+```
+
+In case of SpecialCH.1, 1 means a special promotion applied and 0 means not applied. But for SpecialCH.0, 1 means no special promotion applied and 0 means it's applied. So, between these 2 dummys, it's better to remove SpecialCH.0 for ease of ineterpretation. Same logic applies for SpecialMM dummys.
+```{r}
+X_train<- subset(X_train,select=-c(SpecialCH.0,SpecialMM.0))
+X_test <- subset(X_test,select=-c(SpecialCH.0,SpecialMM.0))
+```
+
+Still 5 levels of StoreID are in the dataset whereas we need only 4 dummys from these 5 levels. One of these can be deleted since "0" in all other StoreID variables will imply the deleted variable. I randomly pick StoreID.7
+```{r}
+X_train <- subset(X_train, select=-StoreID.7)
+X_test <- subset(X_test, select=-StoreID.7)
+```
+
+We are done with the processing of the predictors as required to build SVC model. So now the predictors in train (X_train) can be combined with respective target variable(Y_train).
+
+```{r}
+train_Data <- cbind(y_train, X_train)
+```
+
+I'd like to do a 10-fold cross validation repeated 10 times. Also, let's use grid() to specify the combination of hyperparameters that we want to use in our model.
+```{r}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",number = 10,repeats = 10,
+summaryFunction=twoClassSummary, classProbs = TRUE)
+
+grid <- expand.grid(sigma = c(0.01,.015),
+C = c(0.5,1,1.5))
+```
+
+## Building the model
+
+Let's test for the kernels "linear" and "radial". Also we can look at the ROC curves for different values of sigma and costs. The sigma value for the curve with the highest area under it is the best and the cost at which the curve is at its highest is the best.
+```{r}
+svm_Radial <- train(Purchase ~ ., data = train_Data,
+method='svmRadial',
+trControl = fitControl,
+metric = "ROC",
+verbose = FALSE,
+probability = TRUE,
+tuneGrid = grid
+)
+
+ggplot(svm_Radial)
+```
+
+
+```{r}
+svm_Radial
+```
+
+After trying for different values of cost and sigma (more than what's included in the code above), the best value of ROC is 0.8930132 for sigma=0.015 and C=0.5
+
+```{r}
+(predict(svm_Radial)==train_Data$Purchase) %>% 
+  mean ##In-sample accuracy: 0.8328
+```
+
+
+Now let's use the model on the test predictors dataset and calculate accuracy from confusion matrix
+```{r}
+svmPred <- predict(svm_Radial, newdata = X_test,
+probability = TRUE)
+confusionMatrix(data = svmPred, as.factor(y_test$Purchase))
+```
+
+The accuracy when the model is used for prediction on test data is 0.8785. The in-sample and out-sample accuracy values are quite close which indicates a good bias-variance balance.
+
+
+The sales manager wants to know the probability of a customer purchasing MM. This can be obtained for any given customer in the following way.
+```{r}
+predictedProbs <- predict(svm_Radial, newdata = X_test , type = "prob")
+head(predictedProbs)
+```
+Using these probabilities, we can set different thresholds to classify the data into the 2 classes. The default threshold is 0.5 when we directly predict classes instead of probability. Let's verify this.
+
+```{r}
+predictedProbs$Purchase <- ifelse(predictedProbs$Yes>=0.5,"Yes","No")
+predictedProbs$Purchase <- as.factor(predictedProbs$Purchase)
+confusionMatrix(predictedProbs$Purchase,as.factor(y_test$Purchase))
+```
+The result above is exactly the same as what we have got by predicting the classes directly.
+
+## SVC-Linear
+Let's also try linear model
+```{r}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",number = 10,repeats = 10,
+summaryFunction=twoClassSummary, classProbs = TRUE)
+
+grid <- expand.grid(C = c(0.125,0.25,0.5,1))
+```
+
+
+```{r}
+svm_Linear <- train(Purchase ~ ., data = train_Data,
+method='svmLinear',
+trControl = fitControl,
+metric = "ROC",
+verbose = FALSE,
+probability = TRUE,
+tuneGrid = grid
+)
+svm_Linear
+ggplot(svm_Linear)
+```
+
+```{r}
+svmPred <- predict(svm_Linear, newdata = X_test,
+probability = TRUE)
+confusionMatrix(data = svmPred, as.factor(y_test$Purchase))
+```
+
+## Predicting class probabilities
+```{r}
+predictedProbs <- predict(svm_Linear, newdata = X_test , type = "prob")
+
+predictedProbs$Purchase <- ifelse(predictedProbs$Yes>=0.5,"Yes","No")
+predictedProbs$Purchase <- as.factor(predictedProbs$Purchase)
+confusionMatrix(predictedProbs$Purchase,as.factor(y_test$Purchase))
+```
+
+Using either svmRadial or svmLinear, the maximum out sample accuracy that I could reach with different cost and sigma(only in svmRadial) values is 87.85%
+
+So using either of these SVC models, the sales manager can predict the probability of a customer purchasing MM with 87.85% accuracy which is a good improvement over logistic regression.
+
+The p-value <0.001. I'm 99.9% confident about the model predictions.
+The limits for accuracy based on confidence interval are (0.8012,0.9337)
+The accuracy will not cross this interval.
+
+##Recommendations to Sales Manager
+
+I'd suggest to use the svc_Linear model since it's giving the same accuracy as svc_Radial, but simpler than svc_Radial considering that it required one parameter less. I also suggest to use the model to predict the class probabilities instead of the class itself. By doing this, the sales manager will have the flexibility to choose the threshold for dividing into classes. Also, he will be able to classify the customers into multiple classes like low probability, average probability and high probability of purchasing MM. For each class, he could apply a different strategy to ensure purchase of MM at an optimum cost to the grocery chain. For example, he might want to spend more on promoting MM among the class with low purchase probability and don't spend anything on the class with high purchase probability since they will buy MM anyway.
+
+# Result and Conclusion
+
+I have built a logistic regression model and 2 support vector classification models with radial and linear kernels. 
+
+The brand manager should use the results from the logisitic regression and focus on loyalty to brand, percentage discount on MM, price of MM and also Store 7 to improve purchase probability of MM.
+
+The sales manager needs only a model to predict purchase probability and so, should use the svm_Linear model to predict class probabilities since it offers a higher accuracy of 0.8785 compared to 0.85 of logistic regression. 
+
+We are 99.99% confident about the results of both models (except 95% for Store7 results). Both the models offer a reasonably high accuracy of 80+ with SVC performing slightly better.
